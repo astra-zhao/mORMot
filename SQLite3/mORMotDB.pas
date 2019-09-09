@@ -6,7 +6,7 @@ unit mORMotDB;
 {
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,7 +25,7 @@ unit mORMotDB;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -161,6 +161,7 @@ uses
   Classes,
   SynCommons,
   SynLog,
+  SynTable, // for TSynTableStatement
   mORMot,
   SynDB;
 
@@ -388,7 +389,7 @@ type
     // supplied, but a fixed "fake ID" is returned by the Add() method; at
     // external DB level, no such ID field would be computed nor set at INSERT -
     // this feature may be useful when working with a legacy database - of
-    // course any ID-based ORM method would probably fail to work 
+    // course any ID-based ORM method would probably fail to work
     property EngineAddForcedID: TID read fEngineAddForcedID write fEngineAddForcedID;
     /// define an alternate method of compute the ID for INSERT
     // - by default, a new ID will be with 'select max(ID)', and an internal
@@ -625,11 +626,9 @@ function VirtualTableExternalRegisterAll(aModel: TSQLModel;
   aOptions: TVirtualTableExternalRegisterOptions): boolean; overload;
 var i: integer;
 begin
-  if (aModel=nil) or (aExternalDB=nil) then begin
-    result := false;
+  result := (aModel<>nil) and (aExternalDB<>nil);
+  if not result then
     exit; // avoid GPF
-  end;
-  result := true;
   for i := 0 to high(aModel.Tables) do
     if (regDoNotRegisterUserGroupTables in aOptions) and
        (aModel.Tables[i].InheritsFrom(TSQLAuthGroup) or
@@ -777,7 +776,7 @@ var SQL: RawUTF8;
           exit;
     result := -1;
   end;
-begin       
+begin
   {$ifdef WITHLOG}
   log := Owner.LogClass.Add;
   log.Enter('Create %',[aClass],self);
@@ -1314,41 +1313,34 @@ end;
 function TSQLRestStorageExternal.EngineDeleteWhere(TableModelIndex: integer;
   const SQLWhere: RawUTF8; const IDs: TIDDynArray): boolean;
 const CHUNK_SIZE = 200;
-var i,n: integer;
-    aSQLWhereUpper: RawUTF8;
-    InClause: TIDDynArray;
+var i,n,chunk,pos: integer;
+    rowid: RawUTF8;
 begin
   result := false;
   if (IDs=nil) or (TableModelIndex<0) or (Model.Tables[TableModelIndex]<>fStoredClass) then
     exit;
+  n := length(IDs);
   if fBatchMethod<>mNone then
     if fBatchMethod<>mDELETE then
       exit else
-      for i := 0 to high(IDs) do
+      for i := 0 to n-1 do
         InternalBatchAdd('',IDs[i]) else begin
     if Owner<>nil then // notify BEFORE deletion
-      for i := 0 to high(IDs) do
+      for i := 0 to n-1 do
         Owner.InternalUpdateEvent(seDelete,TableModelIndex,IDs[i],'',nil);
-    aSQLWhereUpper := UpperCase(SQLWhere);
-    if IdemPChar(pointer(aSQLWhereUpper),'LIMIT ') or
-       // LIMIT is not handled by SQLite3 when built from amalgamation
-       // see http://www.sqlite.org/compile.html#enable_update_delete_limit
-       IdemPChar(pointer(aSQLWhereUpper),'ORDER BY ') or
-       (PosEx(' FROM ',aSQLWhereUpper)>0) then begin
-      SetLength(InClause,CHUNK_SIZE); // send by chunks
-      for i := 0 to length(IDs) div CHUNK_SIZE do begin
-        n := length(IDs);
-        if n<(i+1)*CHUNK_SIZE then
-          dec(n,i*CHUNK_SIZE) else
-          n := CHUNK_SIZE;
-        MoveFast(IDs[i*CHUNK_SIZE],InClause[0],n*sizeof(TID));
-        if ExecuteInlined('delete from % where %',[fTableName,Int64DynArrayToCSV(
-            TInt64DynArray(InClause),n,'RowID in (',')')],false)=nil then
-          exit;
-      end;
-    end else
-    if ExecuteInlined('delete from %%',[fTableName,SQLFromWhere(SQLWhere)],false)=nil then
-      exit;
+    rowid := StoredClassProps.ExternalDB.RowIDFieldName;
+    pos := 0;
+    repeat // delete by chunks using primary key
+      chunk := n-pos;
+      if chunk=0 then
+        break;
+      if chunk>CHUNK_SIZE then
+        chunk := CHUNK_SIZE;
+      if ExecuteInlined('delete from % where % in (%)',[fTableName,rowid,
+         Int64DynArrayToCSV(pointer(@IDs[pos]),chunk)],false)=nil then
+        exit;
+      inc(pos,chunk);
+    until false;
     if Owner<>nil then
       Owner.FlushInternalDBCache;
   end;

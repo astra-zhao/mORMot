@@ -6,7 +6,7 @@ unit mORMoti18n;
 (*
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,12 +25,12 @@ unit mORMoti18n;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
   - lagodny
-  
+
   Alternatively, the contents of this file may be used under the terms of
   either the GNU General Public License Version 2 or later (the "GPL"), or
   the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -293,7 +293,8 @@ var
 
 type
   /// a common record to identify a language
-  TLanguage = object
+  {$ifdef UNICODE}TLanguage = record{$else}TLanguage = object{$endif}
+  public
     /// as in LanguageAbr[index], LANGUAGE_NONE before first SetLanguageLocal()
     Index: TLanguages;
     /// the corresponding Char Set
@@ -1314,7 +1315,7 @@ begin
       (LanguageCharSet[LCIDToLanguage(GetUserDefaultLCID)]=CharSet) then begin
       // NormToUpper/Lower[] was filled with LOCALE_USER_DEFAULT values
       // -> OK if same CHARSET, and not multi-byte
-      i18nCompareStr := // not MBCS strict comparaison is always valid
+      i18nCompareStr := // not MBCS strict comparison is always valid
         {$ifdef ENHANCEDRTL}CompareStr{$else}i18nInnerCompareStr{$endif};
       // CompareText in SysUtils.pas uses NormToUpper[], this uses i18nToUpper[]:
       i18nCompareText := i18nInnerCompareText;
@@ -1385,7 +1386,7 @@ begin
       continue;
     if index=CurrentLanguage.Index then
       result := List.Count; // current language selection
-    List.AddObject(format('%s (%s)',[LanguageName(index),LanguageAbr[index]]),
+    List.AddObject(FormatString('% (%)',[LanguageName(index),LanguageAbr[index]]),
       pointer(index));
   end;
 end;
@@ -2203,7 +2204,7 @@ var
 
 function Hash32Str(crc: cardinal; buf: PAnsiChar; len: cardinal): cardinal;
 begin
-  result := Hash32(buf,len);
+  result := Hash32(pointer(buf),len);
 end;
 
 function AddOnceDynArray(const S: WinAnsiString): integer;

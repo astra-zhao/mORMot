@@ -4,7 +4,7 @@ unit SynKylix;
 {
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -23,7 +23,7 @@ unit SynKylix;
 
   The Initial Developer of the Original Code is Arnaud Bouchez
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -90,16 +90,23 @@ const
   FILE_CURRENT = SEEK_CUR;
   FILE_END = SEEK_END;
 
+  CLOCK_REALTIME = 0;
   CLOCK_MONOTONIC = 1;
+  CLOCK_REALTIME_COARSE = 5;
   CLOCK_MONOTONIC_COARSE = 6; // see http://lwn.net/Articles/347811
 
 var
+  // contains CLOCK_REALTIME_COARSE since kernel 2.6.32
+  CLOCK_REALTIME_TICKCOUNT: integer = CLOCK_REALTIME;
   // contains CLOCK_MONOTONIC_COARSE since kernel 2.6.32
   CLOCK_MONOTONIC_TICKCOUNT: integer = CLOCK_MONOTONIC;
 
 /// compatibility function, wrapping Win32 API high resolution timer
 // - this version will return the CLOCK_MONOTONIC value, with a 1 ns resolution
 procedure QueryPerformanceCounter(var Value: Int64);
+
+/// slightly faster than QueryPerformanceCounter() div 1000 - but not for Windows
+procedure QueryPerformanceMicroSeconds(out Value: Int64);
 
 /// compatibility function, wrapping Win32 API high resolution timer
 function QueryPerformanceFrequency(var Value: Int64): boolean;
@@ -110,6 +117,9 @@ function SetFilePointer(hFile: THandle; lDistanceToMove: integer;
 
 /// compatibility function, wrapping Win32 API file truncate at current position
 procedure SetEndOfFile(hFile: integer);
+
+/// compatibility function, wrapping Win32 API file flush to disk
+procedure FlushFileBuffers(hFile: THandle);
 
 /// compatibility function, wrapping Win32 API text comparison
 function CompareStringW(GetThreadLocale: DWORD; dwCmpFlags: DWORD; lpString1: Pwidechar;
@@ -123,6 +133,10 @@ function GetNowUTC: TDateTime;
 
 /// returns the current UTC time, as Unix Epoch seconds
 function GetUnixUTC: Int64;
+
+/// returns the current UTC time, as Unix Epoch milliseconds
+// - will call clock_gettime(CLOCK_REALTIME_COARSE) if available
+function GetUnixMSUTC: Int64;
 
 /// returns the current UTC time as TSystemTime
 procedure GetNowUTCSystem(var result: TSystemTime);
@@ -175,15 +189,20 @@ procedure QueryPerformanceCounter(var Value: Int64);
 var r: TTimeSpec;
 begin
   clock_gettime(CLOCK_MONOTONIC,r);
-  value := r.tv_nsec+r.tv_sec*C_BILLION;
+  value := r.tv_nsec+r.tv_sec*C_BILLION; // nanosecond resolution
+end;
+
+procedure QueryPerformanceMicroSeconds(out Value: Int64);
+var r : TTimeSpec;
+begin
+  clock_gettime(CLOCK_MONOTONIC,r);
+  value := r.tv_nsec div 1000+r.tv_sec*C_MILLION;
 end;
 
 function QueryPerformanceFrequency(var Value: Int64): boolean;
-var r: TTimeSpec;
 begin
-  result := (clock_getres(CLOCK_MONOTONIC,r)=0) and (r.tv_nsec<>0);
-  if result then
-    value := C_BILLION div (r.tv_nsec+(r.tv_sec*C_BILLION));
+  Value := C_BILLION; // 1 second = 1e9 nanoseconds
+  result := true;
 end;
 
 function SetFilePointer(hFile: THandle; lDistanceToMove: integer;
@@ -203,6 +222,11 @@ end;
 procedure SetEndOfFile(hFile: integer);
 begin
   ftruncate64(hFile,lseek64(hFile,0,SEEK_CUR));
+end;
+
+procedure FlushFileBuffers(hFile: THandle);
+begin
+  fsync(hFile);
 end;
 
 function CompareStringW(GetThreadLocale: DWORD; dwCmpFlags: DWORD; lpString1: Pwidechar;
@@ -278,10 +302,17 @@ begin
 end;
 
 function GetUnixUTC: Int64;
-var tz: TTimeVal;
+var r: TTimeSpec;
 begin
-  gettimeofday(tz,nil);
-  result := tz.tv_sec;
+  clock_gettime(CLOCK_REALTIME_TICKCOUNT,r); // faster than gettimeofday
+  result := r.tv_sec;
+end;
+
+function GetUnixMSUTC: Int64;
+var r: TTimeSpec;
+begin
+  clock_gettime(CLOCK_REALTIME_TICKCOUNT,r);
+  result := Int64(r.tv_sec)*C_THOUSAND+(cardinal(r.tv_nsec) div 1000000); // in ms
 end;
 
 procedure GetNowUTCSystem(var result: TSystemTime);
@@ -396,9 +427,10 @@ begin
   uname(uts);
   P := @uts.release;
   KernelRevision := GetNext shl 16+GetNext shl 8+GetNext;
-  if KernelRevision>=$020620 then // expects kernel 2.6.32 or higher
-    CLOCK_MONOTONIC_TICKCOUNT := CLOCK_MONOTONIC_COARSE else
-    CLOCK_MONOTONIC_TICKCOUNT := CLOCK_MONOTONIC;
+  if KernelRevision>=$020620 then begin // expects kernel 2.6.32 or higher
+    CLOCK_MONOTONIC_TICKCOUNT := CLOCK_MONOTONIC_COARSE;
+    CLOCK_REALTIME_TICKCOUNT := CLOCK_REALTIME_COARSE;
+  end;
 end;
 
 initialization

@@ -9,7 +9,7 @@ interface
 
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -28,12 +28,12 @@ interface
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
   - kevinday
-  
+
   Alternatively, the contents of this file may be used under the terms of
   either the GNU General Public License Version 2 or later (the "GPL"), or
   the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -118,7 +118,7 @@ uses
 {$else}
   StdCtrls, ComCtrls, SynTaskDialog, Buttons, CommCtrl,
 {$endif USETMSPACK}
-  SynCommons, SynGdiPlus, SynZip,
+  SynCommons, SynTable, SynGdiPlus, SynZip,
   mORMot, mORMotReport, mORMotUI, mORMoti18n, mORMotUILogin;
 
 
@@ -127,7 +127,8 @@ type
   TFreeShortCutSet = set of ord('A')..ord('Z');
 
   /// a simple object to get one char shortcuts from caption value
-  TFreeShortCut = object
+  {$ifdef UNICODE}TFreeShortCut = record{$else}TFreeShortCut = object{$endif}
+  public
     /// bit set for already used short cut, from 'A' to 'Z'
     Values: TFreeShortCutSet;
     /// attempt to create free shortcut of one char length, from
@@ -334,7 +335,7 @@ type
   TSQLLister = class;
 
   /// this event is called when a button is pressed
-  // - here ActionValue contains the ordinal value of the custom button 
+  // - here ActionValue contains the ordinal value of the custom button
   TSQLListerEvent = procedure(Sender: TObject;
     RecordClass: TSQLRecordClass;
     ActionValue: integer) of object;
@@ -478,7 +479,7 @@ type
   // custom buttons to a previously created one by TSQLLister.SetToolBar()
   // - simply set the associated objects via the Init() method, then call
   // AddToolBar() for every toolbar which need to be created
-  TSQLCustomToolBar = object
+  {$ifdef UNICODE}TSQLCustomToolBar = record{$else}TSQLCustomToolBar = object{$endif}
   public
     Page: TSynPage;
     ActionHints: string;
@@ -794,7 +795,8 @@ procedure CreateReportWithIcons(ParamsEnum: PTypeInfo; ImgList: TImageList;
   const Title, Hints: string; StartIndexAt: integer);
 
 /// load a bitmap from a .png/.jpg file embedded as a resource to the executable
-function LoadBitmapFromResource(const ResName: string): TBitmap;
+// - you can specify a library (dll) resource instance handle, if needed
+function LoadBitmapFromResource(const ResName: string; Instance: THandle=0): TBitmap;
 
 /// fill a TImageList from the content of another TImageList
 // - stretching use GDI+ so is smooth enough for popup menu display
@@ -1063,7 +1065,7 @@ var TypeName: PShortString;
       PTypeInfo(TypeInfo(TSQLAction))^.EnumBaseType^.GetEnumName(A2)),
       iAction,nil,iAction-1,integer(A2));
   end;
-  
+
 begin
   result := nil;
   if fPage=nil then
@@ -1077,7 +1079,7 @@ begin
         GB := TSynToolButton(result.Components[iGB]);
         if isActionButton(GB)<>0 then begin
           img := GB.ImageIndex;
-          EN := GetBit(aActions,img+1);
+          EN := GetBitPtr(@aActions,img+1);
           GB.Enabled := EN;  // enable or disable buttons
           for iM := 0 to fMenu.Items.Count-1 do
           with fMenu.Items[iM] do
@@ -1092,7 +1094,7 @@ begin
   // no Toolbar: create one with its buttons; also create associated popup menu
   EN := false;
   for A := 0 to fActionMax do
-    if GetBit(aActions,A) then begin
+    if GetBitPtr(@aActions,A) then begin
       EN := true;
       break;
     end;
@@ -1122,10 +1124,10 @@ begin
     end;
     for iAction := fActionMax downto 0 do begin // TToolBar adds at 1st position
 {$endif}
-      if GetBit(aActions,iAction) then // is this enumerate value inside aActions?
+      if GetBitPtr(@aActions,iAction) then // is this enumerate value inside aActions?
         with result.CreateToolButton(ActionButtonClick,iAction,1,ActionNames[iAction],
            ActionHints,fShortCutUsed,60,ImageList32) do begin
-          if GetBit(ActionIsNotButton,iAction) then
+          if GetBitPtr(@ActionIsNotButton,iAction) then
             Style := bsCheck;
           // create associated sub menu entry
           if Style<>bsCheck then begin
@@ -1133,7 +1135,7 @@ begin
             if TSQLAction(iAction)=actMark then begin // Mark sub-menu
               InsertSubMenu(actmarkAllEntries);
               InsertSubMenu(actmarkInverse);
-              if TableToGrid.FieldIndexTimeLogForMark>=0 then 
+              if TableToGrid.FieldIndexTimeLogForMark>=0 then
                 for A2 := actmarkToday to actmarkOlderThanOneYear do begin
                   if A2 in [actmarkToday,actmarkOlderThanOneDay] then
                     CreateSubMenuItem('-',iAction,nil);
@@ -1653,7 +1655,7 @@ begin
   AddReportMenu('-'); // separator
   P := @FReportPopupParams^.NameList;
   for i := 0 to FReportPopupParams^.MaxValue do begin
-    if GetBit(FReportPopupParamsEnabled^,i) then
+    if GetBitPtr(FReportPopupParamsEnabled,i) then
       with AddReportMenu(Table.CaptionNameFromRTTI(P)) do
         Checked := (FReportPopupValues[i]<>nil) and FReportPopupValues[i]^;
     inc(PByte(P),ord(P^[0])+1); // next enumeration item
@@ -1725,7 +1727,7 @@ begin
     result := Page.CreateToolBar else begin
     result := nil;
     for iAction := 0 to ActionsEnum^.MaxValue do
-      if GetBit(ActionsBits^,iAction) then begin
+      if GetBitPtr(ActionsBits,iAction) then begin
         result := Page.CreateToolBar;
         break;
       end;
@@ -1755,7 +1757,7 @@ begin
     end; // TToolBar adds at 1st position -> downto
     for iAction := ActionsEnum^.MaxValue downto 0 do begin
 {$endif}
-      if (ActionsBits=nil) or GetBit(ActionsBits^,iAction) then
+      if (ActionsBits=nil) or GetBitPtr(ActionsBits,iAction) then
         Buttons[iAction] := result.CreateToolButton(ButtonClick,iAction,
          ImageListFirstIndex,ActionNames[iAction],ActionHints,ShortCutUsed,
          ButtonWidth,ImageList);
@@ -1847,14 +1849,16 @@ end;
 
 {$endif USETMSPACK}
 
-function LoadBitmapFromResource(const ResName: string): TBitmap;
+function LoadBitmapFromResource(const ResName: string; Instance: THandle): TBitmap;
 var Pic: TSynPicture;
 begin
+  if Instance=0 then
+    Instance := HInstance;
   result := TBitmap.Create;
   try
     Pic := TSynPicture.Create;
     try
-      Pic.LoadFromResourceName(HInstance,ResName); // *.png
+      Pic.LoadFromResourceName(Instance,ResName); // *.png
       result.Width := Pic.Width;
       result.Height := Pic.Height;
       result.Canvas.Draw(0,0,Pic);
@@ -2997,8 +3001,7 @@ begin
       if (aID>0) and (Caption='') then
         Caption := U2S(Client.MainFieldValue(aTable,aID,true));
       Font.Size := 9;
-      AddPagesToFooterAt(
-        format('%s - %s %s',[sPageN,aTable.CaptionName,Caption]),LeftMargin);
+      AddPagesToFooterAt(FormatString('% - % %',[sPageN,aTable.CaptionName,Caption]),LeftMargin);
       Font.Size := 10;
       P := GetPage(aTable);
       if (P<0) or (aID<=0) then

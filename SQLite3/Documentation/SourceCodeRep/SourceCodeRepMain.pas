@@ -106,10 +106,14 @@ begin
 end;
 
 procedure TMainForm.ReadStatus;
+var status: RawUTF8;
 begin
   ExecAndWait(fBatPath + 'FossilStatus.bat "' + fBatPath + 'status.txt"',
     fFossilRepository, SW_HIDE, 10000);
-  mmoStatus.Text := StringFromFile(fBatPath + 'status.txt');
+  status := StringFromFile(fBatPath + 'status.txt');
+  if PosEx(#13#10, status) = 0 then
+    status := StringReplaceAll(status, #10, #13#10);
+  mmoStatus.Text := UTF8ToString(status);
 end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
@@ -128,8 +132,11 @@ begin
       fDevPath := 'd:\dev\lib' else
       fDevPath := fFossilRepository;
   fGitExe := GetEnvironmentVariable('GIT_PATH');
-  if fGitExe = '' then
+  if fGitExe = '' then begin
     fGitExe := 'c:\Program Files (x86)\Git\bin\git.exe';
+    if not FileExists(fGitExe) then
+      fGitExe := 'c:\Program Files\Git\bin\git.exe';
+  end;
   fGitRepository := GetEnvironmentVariable('SYN_GITREPO_PATH');
   if fGitRepository = '' then
     fGitRepository := 'd:\dev\github\mORMot';
@@ -168,7 +175,7 @@ begin
     exit;
   end;
   if chkFossilPull.Checked then
-    ExecAndWait(format('%sFossilUpdate.bat "%s" %d',
+    ExecAndWait(FormatString('%FossilUpdate.bat "%" %',
       [fBatPath, DescFile, Integer(chkFossilPush.Checked)]),
       fFossilRepository, SW_SHOWNORMAL, INFINITE);
   VersionText := UnQuoteSQLString(StringFromFile(fDevPath + '\SynopseCommit.inc'));
@@ -180,7 +187,7 @@ begin
   FileFromString(VersionText, fFossilRepository + '\SynopseCommit.inc');
   DescFile := fBatPath + 'desc.txt';
   FileFromString('{' + IntToStr(VersionNumber) + '} ' + Desc, DescFile);
-  ExecAndWait(format('%sFossilCommit.bat "%s" %d', [fBatPath, DescFile,
+  ExecAndWait(FormatString('%FossilCommit.bat "%" %', [fBatPath, DescFile,
     Integer(chkFossilPush.Checked)]),
     fFossilRepository, SW_SHOWNORMAL, INFINITE);
   btnRefreshStatus.Click;
@@ -246,7 +253,7 @@ begin
     BatchFile := 'GitCommitLVCL.bat'
   else
     BatchFile := 'GitCommit.bat';
-  ExecAndWait(format('%s%s "%s" "%s" "%s" "%s" "%s"', [fBatPath, BatchFile,
+  ExecAndWait(FormatString('%% "%" "%" "%" "%" "%"', [fBatPath, BatchFile,
     fFossilRepository, fGitRepository, fGitExe, DescFile, fDevPath]),
     fGitRepository, SW_SHOWNORMAL, INFINITE);
   mmoDescription.SetFocus; // ReadStatus not necessary if git only
@@ -261,7 +268,7 @@ end;
 
 procedure TMainForm.btnGitShellClick(Sender: TObject);
 begin
-  ExecAndWait(format('%sGitShell.bat  "%s"', [fBatPath, ExtractFilePath(fGitExe)]),
+  ExecAndWait(FormatString('%GitShell.bat  "%"', [fBatPath, ExtractFilePath(fGitExe)]),
     fGitRepository, SW_SHOWNORMAL, INFINITE);
 end;
 

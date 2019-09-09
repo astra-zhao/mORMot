@@ -6,7 +6,7 @@ unit SynCrossPlatformREST;
 {
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,7 +25,7 @@ unit SynCrossPlatformREST;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -73,11 +73,12 @@ uses
   SysUtils,
   Classes,
   TypInfo,
-{$ifdef NEXTGEN}
+{$ifdef ISDELPHI2010}
   System.Generics.Collections,
-{$else}
+{$endif}
+{$ifndef NEXTGEN}
   Contnrs,
-{$endif NEXTGEN}
+{$endif}
   Variants,
   SynCrossPlatformJSON,
 {$endif ISDWS}
@@ -105,6 +106,20 @@ type
 
   {$ifdef ISDWS}
 
+  // UTILS functions 
+  function window: variant; external 'window' property;
+  function document: variant; external 'document' property;
+
+  // URI functions
+  function EncodeURIComponent(str: String): String; external 'encodeURIComponent';
+  function DecodeURIComponent(str: String): String; external 'decodeURIComponent';
+  function EncodeURI(str: String): String; external 'encodeURI';
+  function DecodeURI(str: String): String; external 'decodeURI';
+
+  // Variant management 
+  function VarIsValidRef(const aRef: Variant): Boolean;
+
+type					   
   // circumvent limited DWS / SMS syntax
   TPersistent = TObject;
   TObjectList = array of TObject;
@@ -781,9 +796,16 @@ type
     // - use DateTimeToSQL() for date/time database fields
     // - FieldNames='' retrieve simple fields, '*' all fields, or as specified
     function RetrieveList(Table: TSQLRecordClass; const FieldNames,
-      SQLWhere: string; const BoundsSQLWhere: array of const): TObjectList;
+      SQLWhere: string; const BoundsSQLWhere: array of const): TObjectList; overload;
     /// execute directly a SQL statement, returning a list of data rows or nil
     function ExecuteList(const SQL: string): TSQLTableJSON; virtual; abstract;
+    {$ifdef ISDELPHI2010} // Delphi 2009 generics support is buggy :(
+    /// execute directly a SQL statement, returning a generic list of TSQLRecord
+    // - you can bind parameters by using ? in the SQLWhere clause
+    // - use DateTimeToSQL() for date/time database fields
+    // - FieldNames='' retrieve simple fields, '*' all fields, or as specified
+    function RetrieveList<T: TSQLRecord>(const FieldNames, SQLWhere: string; const BoundsSQLWhere: array of const): TObjectList<T>; overload;
+    {$endif}
 
     /// create a new member, returning the newly created ID, or 0 on error
     // - if SendData is true, content of Value is sent to the server as JSON
@@ -793,7 +815,7 @@ type
     // specify a CSV list of field values to be transmitted - including blobs,
     // which will be sent as base-64 encoded JSON
     function Add(Value: TSQLRecord; SendData: boolean; ForceID: boolean=false;
-      const FieldNames: string=''): TID; virtual;
+      FieldNames: string=''): TID; virtual;
     /// delete a member
     function Delete(Table: TSQLRecordClass; ID: TID): boolean; virtual; abstract;
     /// update a member
@@ -1312,6 +1334,14 @@ var
 
 implementation
 
+{$ifdef ISDWS}
+function VarIsValidRef(const aRef: Variant): Boolean;
+begin
+  asm
+    @Result = !((@aRef == null) || (@aRef == undefined));
+  end;
+end;
+{$endif}
 function IsRowID(const PropName: string): boolean;
 begin
   result := IdemPropName(PropName,'ID') or
@@ -1384,7 +1414,7 @@ begin
   Y := (Value shr (6+6+5+5+4)) and 4095;
   {$endif}
   if (Y=0) or not TryEncodeDate(Y,1+(Value shr (6+6+5+5)) and 15,
-       1+(Value shr (6+6+5)) and 31,result) then
+       1+(Value shr (6+6+5)) and 31,DateTimeZone.UTC,result) then
     result := 0;
   if (Value and (1 shl (6+6+5)-1)<>0) and
      TryEncodeTime((Value shr (6+6)) and 31,
@@ -2263,8 +2293,32 @@ begin
     end;
 end;
 
+{$ifdef ISDELPHI2010}
+function TSQLRest.RetrieveList<T>(const FieldNames, SQLWhere: string;
+  const BoundsSQLWhere: array of const): TObjectList<T>;
+var rows: TSQLTableJSON;
+    rec: TSQLRecord;
+begin
+  result := TObjectList<T>.Create; // TObjectList<T> will free each T instance
+  rows := MultiFieldValues(TSQLRecordClass(T),FieldNames,SQLWhere,BoundsSQLWhere);
+  if rows<>nil then
+    try
+      repeat
+        rec := TSQLRecordClass(T).Create;
+        if not rows.FillOne(rec) then begin
+          rec.Free;
+          break;
+        end;
+        result.Add(rec);
+      until false;
+    finally
+      rows.Free;
+    end;
+end;
+{$endif}
+
 function TSQLRest.Add(Value: TSQLRecord; SendData, ForceID: boolean;
-  const FieldNames: string): TID;
+  FieldNames: string): TID;
 var tableIndex: Integer;
     json: string;
 begin
@@ -3059,12 +3113,13 @@ begin
 end;
 
 procedure TSQLRestClientURI.CallRemoteService(aCaller: TServiceClientAbstract;
-   const aMethodName: string; aExpectedOutputParamsCount: integer;
-   const aInputParams: array of variant; out res: TVariantDynArray;
-   aReturnsCustomAnswer: boolean);
+  const aMethodName: string; aExpectedOutputParamsCount: integer;
+  const aInputParams: array of variant; out res: TVariantDynArray;
+  aReturnsCustomAnswer: boolean);
 var Call: TSQLRestURIParams;
     params: TJSONVariantData;
     result: variant;
+    bodyerror: string;
     arr: PJSONVariantData;
     i,outID: integer;
 begin
@@ -3072,9 +3127,11 @@ begin
   for i := 0 to high(aInputParams) do
     params.AddValue(aInputParams[i]);
   CallRemoteServiceInternal(Call,aCaller,aMethodName,params.ToJSON);
-  if Call.OutStatus<>HTTP_SUCCESS then
-    raise EServiceException.CreateFmt('Error calling %s.%s - returned status %d',
-      [aCaller.fServiceName,aMethodName,Call.OutStatus]);
+  if Call.OutStatus<>HTTP_SUCCESS then begin
+    HttpBodyToText(Call.OutBody,bodyerror);
+    raise EServiceException.CreateFmt('Error calling %s.%s - returned status %d'#13#10'%s',
+      [aCaller.fServiceName,aMethodName,Call.OutStatus,bodyerror]);
+  end;
   if aReturnsCustomAnswer then begin
     SetLength(res,1);
     res[0] := HttpBodyToVariant(Call.OutBody);
@@ -3283,7 +3340,7 @@ var base64: RawUTF8;
 begin
   base64 := aUsername+':'+aPasswordClear;
   {$ifdef ISSMS}
-  base64 := w3_base64encode(base64);
+  base64 := window.btoa(base64);
   {$else}
   base64 := BytesToBase64JSONString(TByteDynArray(TextToHttpBody(base64)),false);
   {$endif}

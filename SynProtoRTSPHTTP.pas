@@ -6,7 +6,7 @@ unit SynProtoRTSPHTTP;
 {
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,12 +25,12 @@ unit SynProtoRTSPHTTP;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
 
-  
+
   Alternatively, the contents of this file may be used under the terms of
   either the GNU General Public License Version 2 or later (the "GPL"), or
   the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -82,8 +82,6 @@ uses
   SynBidirSock,
   SynLog,
   SynTests;
-
-{$I Synopse.inc}
 
 type
   /// holds a HTTP POST connection for RTSP proxy
@@ -221,8 +219,9 @@ begin
 end;
 
 destructor TRTSPOverHTTPServer.Destroy;
+var log: ISynLog;
 begin
-  fLog.Enter(self);
+  log := fLog.Enter(self{$ifndef DELPHI5OROLDER},'Destroy'{$endif});
   inherited Destroy;
   fPendingGet.Free;
 end;
@@ -236,6 +235,9 @@ type
     property URL;
     property RemoteIP;
   end;
+
+const
+  RTSP_MIME = 'application/x-rtsp-tunnelled';
 
 function TRTSPOverHTTPServer.ConnectionCreate(aSocket: TSocket;
   out aConnection: TAsynchConnection): boolean;
@@ -264,16 +266,16 @@ begin
     sock := TProxySocket.Create(nil);
     try
       sock.InitRequest(aSocket);
-      if sock.GetRequest(false) and (sock.URL <> '') then begin
+      if sock.GetRequest({withBody=}false, {headertix=}0) and (sock.URL <> '') then begin
         if log<>nil then
           log.Log(sllTrace, 'ConnectionCreate received % % %', [sock.Method, sock.URL,
             sock.HeaderGetText], self);
-        cookie := sock.HeaderValue('x-sessioncookie');
+        cookie := sock.HeaderGetValue('X-SESSIONCOOKIE');
         if cookie = '' then
           exit;
         fPendingGet.Safe.Lock;
         try
-          now := GetTickCount64 shr 10;
+          now := SynCommons.GetTickCount64 shr 10;
           for i := fPendingGet.Count - 1 downto 0 do begin
             old := fPendingGet.ObjectPtr[i];
             if now > old.fExpires then begin
@@ -293,7 +295,7 @@ begin
                 'Date: Thu, 19 Aug 1982 18:30:00 GMT'#13#10 +
                 'Cache-Control: no-store'#13#10 +
                 'Pragma: no-cache'#13#10 +
-                'Content-Type: application/x-rtsp-tunnelled'#13#10#13#10,
+                'Content-Type: ' + RTSP_MIME + #13#10#13#10,
                 [ExeVersion.ProgramName, ExeVersion.Version.DetailedOrVoid]));
               sock.fExpires := now + 60 * 15; // deprecated after 15 minutes
               sock.CloseSockIn; // we won't use it any more
@@ -306,8 +308,7 @@ begin
             if i < 0 then begin
               if log<>nil then
                 log.Log(sllDebug, 'ConnectionCreate rejected on unknonwn %', [sock], self)
-            end else if not IdemPropNameU(sock.ContentType,
-              'application/x-rtsp-tunnelled') then
+            end else if not IdemPropNameU(sock.ContentType, RTSP_MIME) then
               PendingDelete(i, sock.ContentType)
             else begin
               get := fPendingGet.Objects[i] as TProxySocket;
@@ -375,7 +376,7 @@ var
   text: SockString;
   log: ISynLog;
 begin // here we follow the steps and content stated by https://goo.gl/CX6VA3
-  log := fLog.Enter(self);
+  log := fLog.Enter(self{$ifndef DELPHI5OROLDER},'Tests'{$endif});
   if (self = nil) or (fRtspServer <> '127.0.0.1') then
     test.Check(false, 'expect a running proxy on 127.0.0.1')
   else
@@ -394,7 +395,7 @@ begin // here we follow the steps and content stated by https://goo.gl/CX6VA3
           'GET /sw.mov HTTP/1.0'#13#10 +
           'User-Agent: QTS (qtver=4.1;cpu=PPC;os=Mac 8.6)'#13#10 +
           'x-sessioncookie: ' + session + #13#10 +
-          'Accept: application/x-rtsp-tunnelled'#13#10 +
+          'Accept: ' + RTSP_MIME + #13#10 +
           'Pragma: no-cache'#13#10 +
           'Cache-Control: no-cache'#13#10#13#10);
         get.SockRecvLn(text);
@@ -402,7 +403,7 @@ begin // here we follow the steps and content stated by https://goo.gl/CX6VA3
         get.GetHeader;
         test.Check(get.ConnectionClose);
         test.Check(get.SockConnected);
-        test.Check(get.ContentType = 'application/x-rtsp-tunnelled');
+        test.Check(get.ContentType = RTSP_MIME);
       end;
       if log<>nil then
         log.Log(sllCustom1, 'RegressionTests % POST', [clientcount], self);
@@ -413,7 +414,7 @@ begin // here we follow the steps and content stated by https://goo.gl/CX6VA3
           'POST /sw.mov HTTP/1.0'#13#10 +
           'User-Agent: QTS (qtver=4.1;cpu=PPC;os=Mac 8.6)'#13#10 +
           'x-sessioncookie: ' + session + #13#10 +
-          'Content-Type: application/x-rtsp-tunnelled'#13#10 +
+          'Content-Type: ' + RTSP_MIME + #13#10 +
           'Pragma: no-cache'#13#10 +
           'Cache-Control: no-cache'#13#10 +
           'Content-Length: 32767'#13#10 +

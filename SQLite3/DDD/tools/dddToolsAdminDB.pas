@@ -57,7 +57,6 @@ type
     fSQL, fPreviousSQL: RawUTF8;
     fSQLLogFile: TFileName;
     function ExecSQL(const SQL: RawUTF8): RawUTF8;
-    procedure SetResult(const JSON: RawUTF8); virtual;
     function OnText(Sender: TSQLTable; FieldIndex, RowIndex: Integer;
       var Text: string): boolean;
     procedure OnCommandsToGridAdd(const Item: TSynNameValueItem; Index: PtrInt);
@@ -89,6 +88,7 @@ type
     procedure Open; virtual;
     procedure FillTables(const customcode: string); virtual;
     procedure AddSQL(SQL: string; AndExec: boolean);
+    procedure SetResult(const JSON: RawUTF8); virtual;
     function NewCmdPopup(const c: string; NoCmdTrim: boolean): TMenuItem;
     destructor Destroy; override;
   end;
@@ -142,6 +142,7 @@ begin
   mmoSQL.Text := '#help';
   btnExecClick(nil);
   mmoSQL.Text := '';
+  mmoResult.Text := '';
 end;
 
 procedure TDBFrame.FillTables(const customcode: string);
@@ -278,7 +279,7 @@ begin
         if cmd = '#log ' then
           sub.Caption := sub.Caption + '  ' + res.Values[i].TimeStamp
         else
-          sub.Caption := format('%s  %s', [sub.Caption, KB(res.Values[i].Size)]);
+          sub.Caption := FormatString('%  %', [sub.Caption, KB(res.Values[i].Size)]);
         subpar.Add(sub);
       end;
   end
@@ -440,8 +441,8 @@ begin
     drwgrdResult.Options := drwgrdResult.Options - [goRowSelect];
     drwgrdResult.Show;
     mmoResult.OnGetLineAttr := mmoResult.JSONLineAttr;
-    mmoResult.Text := Format(#13#10' Returned %d row(s), as %s in %s',
-      [table.RowCount, KB(Length(fJson)), execTime]);
+    mmoResult.Text := FormatString(#13#10' Returned % row(s), as % in %',
+      [table.RowCount, KB(fJson), execTime]);
   end;
   if Sender <> nil then begin
     mmoSQL.SelStart := SelStart;

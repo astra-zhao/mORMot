@@ -6,10 +6,10 @@ unit SpiderMonkey;
 {
     This file is part of Synopse framework.
 
-    Synopse framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - http://synopse.info
 
-    SyNode for mORMot Copyright (C) 2017 Pavel Mashlyakovsky & Vadim Orel
+    SyNode for mORMot Copyright (C) 2019 Pavel Mashlyakovsky & Vadim Orel
       pavel.mash at gmail.com
 
   *** BEGIN LICENSE BLOCK *****
@@ -26,7 +26,7 @@ unit SpiderMonkey;
 
   The Initial Developer of the Original Code is
   Pavel Mashlyakovsky & Vadim Orel.
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -49,12 +49,6 @@ unit SpiderMonkey;
 
   ***** END LICENSE BLOCK *****
 
-  ---------------------------------------------------------------------------
-   Download the mozjs-45 library at
-     x32: https://unitybase.info/downloads/mozjs-45.zip
-     x64: https://unitybase.info/downloads/mozjs-45-x64.zip
-  ---------------------------------------------------------------------------
-
   Version 1.18
   - initial release. Use SpiderMonkey 45
 }
@@ -68,6 +62,7 @@ uses
   Windows,
   {$endif}
   SynCommons,
+  SynTable,
   SynLog,
   SysUtils;
 
@@ -94,10 +89,10 @@ type
 {$endif}
   uintN = PtrUInt;
 
-{$ifndef FPC}
+{.$ifndef FPC}
   /// variable type used to store a buffer size (in bytes) for SMAPI
   size_t = PtrUInt;
-{$endif}
+{.$endif}
   psize_t = ^size_t;
   CChar = AnsiChar;
   PCChar = PAnsiChar;
@@ -370,7 +365,9 @@ type
 
 {$ifndef CPU64}
 /// first 4 bytes for JSValue
-{$Z4}
+{$MINENUMSIZE 4}
+{$WARN COMBINING_SIGNED_UNSIGNED OFF}
+{$WARN BOUNDS_ERROR OFF}
   JSValueTag = (
   JSVAL_TAG_CLEAR      = Cardinal($FFFFFF80),
   JSVAL_TAG_INT32      = Cardinal(JSVAL_TAG_CLEAR or UInt8(JSVAL_TYPE_INT32)),
@@ -382,6 +379,9 @@ type
   JSVAL_TAG_NULL       = Cardinal(JSVAL_TAG_CLEAR or UInt8(JSVAL_TYPE_NULL)),
   JSVAL_TAG_OBJECT     = Cardinal(JSVAL_TAG_CLEAR or UInt8(JSVAL_TYPE_OBJECT))
   );
+{$WARN BOUNDS_ERROR ON}
+{$WARN COMBINING_SIGNED_UNSIGNED ON}
+{$MINENUMSIZE 1}
 {$endif}
 
 
@@ -487,7 +487,18 @@ type
   PJSStringFinalizer = ^JSStringFinalizer;
 
 // jsid
-  jsid = size_t;
+  JSIdType = (
+    JSID_TYPE_STRING = $0,
+    JSID_TYPE_INT    = $1,
+    JSID_TYPE_VOID   = $2,
+    JSID_TYPE_SYMBOL = $4
+  );
+  jsid = record
+    asBits: size_t;
+    function isString: Boolean;
+    function asJSString: PJSString;
+  end;
+
   TjsidVector = array[0..(MaxInt div sizeof(jsid))-2] of jsid;
   PjsidVector = ^TjsidVector;
 
@@ -917,10 +928,16 @@ type
     function GetRuntime: PJSRuntime; {$ifdef HASINLINE}inline;{$endif}
 {$ENDIF}
     function GetIsRunning: boolean; {$ifdef HASINLINE}inline;{$endif}
+  protected
+    // Return the ArrayBuffer underlying an ArrayBufferView
+    // - If the buffer has been neutered, this will still return the neutered buffer.
+    // - obj must be an object that would return true for JS_IsArrayBufferViewObject()
+    function GetArrayBufferViewBuffer(var obj: PJSObject; out isSharedMemory: Boolean): PJSObject; overload;{$ifdef HASINLINE}inline;{$endif}
+    function GetArrayBufferViewBuffer(var obj: PJSObject): PJSObject; overload;{$ifdef HASINLINE}inline;{$endif}
   public
 {$IFDEF SM52}
     /// Initializes the JavaScript context.
-    class function CreateNew(maxbytes: uint32; maxNurseryBytes: uint32; parentContext: PJSContext): PJSContext;
+    class function CreateNew(maxbytes: uint32; maxNurseryBytes: uint32 = 16 * (1 SHL 20); parentContext: PJSContext = nil): PJSContext;
     /// Performs garbage collection in the JS memory pool.
     procedure GC; {$ifdef HASINLINE}inline;{$endif}
     /// Returns the empty string as a JSString object.
@@ -992,6 +1009,9 @@ type
     // for Number).
     // - NB: This sets cx's global object to obj if it was null.
     function InitStandardClasses(var obj: PJSObject): boolean;
+    /// Add 'Reflect.parse', a SpiderMonkey extension, to the Reflect object on the
+    // given global.
+    function InitReflectParse(var obj: PJSObject): boolean;
     /// Initialize the 'ctypes' object on a global variable 'obj'. The 'ctypes'
     // object will be sealed.
     function InitCTypesClass(var obj: PJSObject): boolean;
@@ -1303,13 +1323,6 @@ type
     /// Create a new ArrayBuffer with the given byte length.
     function NewArrayBuffer(nbytes: uint32): PJSObject;{$ifdef HASINLINE}inline;{$endif}
 
-    /// Return the ArrayBuffer underlying an ArrayBufferView
-    // - If the buffer has been neutered, this will still return the neutered buffer.
-    // - obj must be an object that would return true for JS_IsArrayBufferViewObject()
-    function GetArrayBufferViewBuffer(var obj: PJSObject; out isSharedMemory: Boolean): PJSObject; overload;{$ifdef HASINLINE}inline;{$endif}
-    function GetArrayBufferViewBuffer(var obj: PJSObject): PJSObject; overload;{$ifdef HASINLINE}inline;{$endif}
-
-
     /// Indicates whether or not a script or function is currently executing in a given context.
     property IsRunning: boolean read GetIsRunning;
     /// Destroy a JSContext.
@@ -1347,6 +1360,20 @@ type
     procedure SetReservedSlot(index: uint32; v: jsval); {$ifdef HASINLINE}inline;{$endif}
     function GetClass: PJSClass; {$ifdef HASINLINE}inline;{$endif}
     function GetConstructor(cx: PJSContext): PJSObject; {$ifdef HASINLINE}inline;{$endif}
+    // Return the available byte length of an array buffer
+    // - obj must have passed a JS_IsArrayBufferObject test, or somehow be known
+    // that it would pass such a test: it is an ArrayBuffer or a wrapper of an
+    // ArrayBuffer, and the unwrapping will succeed
+    function GetArrayBufferByteLength: uint32;{$ifdef HASINLINE}inline;{$endif}
+    function GetSharedArrayBufferByteLength: uint32;{$ifdef HASINLINE}inline;{$endif}
+    // Return a pointer to the start of the data referenced by any typed array
+    // - The data is still owned by the typed array, and should not be modified on
+    // another thread
+    // - obj must have passed a JS_Is*Array test, or somehow be known that it would
+    // pass such a test: it is a typed array or a wrapper of a typed array, and the
+    // unwrapping will succeed
+    // - Prefer the type-specific versions when possible
+    function GetArrayBufferViewData(out isSharedMemory: Boolean; nogc: PJSAutoCheckCannotGC): Pointer;{$ifdef HASINLINE}inline;{$endif}
   public
     /// get a jsval corresponding to this object
     function ToJSValue: jsval; {$ifdef HASINLINE}inline;{$endif}
@@ -1441,7 +1468,7 @@ type
     /// Make a JSClass accessible to JavaScript code by creating its prototype,
     // constructor, properties, and functions.
     function InitClass(cx: PJSContext; var parent_proto: PJSObject;
-      clasp: PJSClass; _constructor: JSNative; nargs: UINT;
+      clasp: PJSClass; _constructor: JSNative; nargs: Cardinal;
       ps: PJSPropertySpec; fs: PJSFunctionSpec;
       static_ps: PJSPropertySpec; static_fs: PJSFunctionSpec): PJSObject; {$ifdef HASINLINE}inline;{$endif}
 
@@ -1600,14 +1627,6 @@ type
 
     function IsSharedArrayBufferObject: Boolean;
 
-    /// Return the available byte length of an array buffer
-    // - obj must have passed a JS_IsArrayBufferObject test, or somehow be known
-    // that it would pass such a test: it is an ArrayBuffer or a wrapper of an
-    // ArrayBuffer, and the unwrapping will succeed
-    function GetArrayBufferByteLength: uint32;{$ifdef HASINLINE}inline;{$endif}
-
-    function GetSharedArrayBufferByteLength: uint32;{$ifdef HASINLINE}inline;{$endif}
-
     /// Return true if the arrayBuffer contains any data. This will return false for
     // ArrayBuffer.prototype and neutered ArrayBuffers.
     //
@@ -1726,13 +1745,11 @@ type
     function GetFloat64ArrayData(out isSharedMemory: Boolean; nogc: PJSAutoCheckCannotGC): Pfloat64Vector;{$ifdef HASINLINE}inline;{$endif}
 
     /// Return a pointer to the start of the data referenced by any typed array
+    // and it's length. For ArrayBufferView return a pointer and length of slice.
     // - The data is still owned by the typed array, and should not be modified on
     // another thread
-    // - obj must have passed a JS_Is*Array test, or somehow be known that it would
-    // pass such a test: it is a typed array or a wrapper of a typed array, and the
-    // unwrapping will succeed
-    // - Prefer the type-specific versions when possible
-    function GetArrayBufferViewData(out isSharedMemory: Boolean; nogc: PJSAutoCheckCannotGC): Pointer;{$ifdef HASINLINE}inline;{$endif}
+    // - If JSObject is not a typed array or arrayBufferView return false
+    function GetBufferDataAndLength(out data: Puint8Vector; out len: uint32): boolean;{$ifdef HASINLINE}inline;{$endif}
   end;
 
 
@@ -2092,9 +2109,17 @@ type
     FJSStackTrace: SynUnicode;
   public
     /// constructor which will create JavaScript exception with JS stack trace
-    constructor CreateWithTrace(const AFileName: RawUTF8; AJSErrorNum, ALineNum: integer; AMessage: string; const AStackTrace: SynUnicode);
+    constructor CreateWithTrace(const AFileName: RawUTF8; AJSErrorNum, ALineNum: integer;
+       AMessage: string; const AStackTrace: SynUnicode);
+    /// Format a JS exception as text
+    // If SM_DEBUG is defined will write full JS stack, including SyNode core_modules calls
+    //  if not - core_modules is cutched from stack trace for simplicity
+    procedure WriteFormatted(WR: TTextWriter);
+
+    {$ifndef NOEXCEPTIONINTERCEPT}
     /// Custmize SM exception log output
     function CustomLog(WR: TTextWriter; const Context: TSynLogExceptionContext): boolean; override;
+    {$endif}
   published
     property ErrorNum: integer read FJSErrorNum;
     property Stack: SynUnicode read FJSStackTrace;
@@ -2184,9 +2209,9 @@ function SimpleVariantToJSval(cx: PJSContext; val: Variant): jsval;
 
 const
 {$IFDEF SM52}
-  SpiderMonkeyLib =  'mozjs-52.dll';
+  SpiderMonkeyLib = 'synmozjs52'{$IFDEF MSWINDOWS} + '.dll'{$ENDIF};
 {$ELSE}
-  SpiderMonkeyLib =  'mozjs-45.dll';
+  SpiderMonkeyLib = 'mozjs-45'{$IFDEF MSWINDOWS} + '.dll'{$ENDIF};
 {$ENDIF}
 
  /// Initialize SpiderMonkey, returning true only if initialization succeeded.
@@ -2215,6 +2240,7 @@ procedure JS_ShutDown; cdecl; external SpiderMonkeyLib;
 
 /// Microseconds since the epoch, midnight, January 1, 1970 UTC.
 function JS_Now: int64; cdecl; external SpiderMonkeyLib;
+
 /// Returns the empty string as a JSString object.
 {$IFDEF SM52}
 function JS_GetEmptyString(cx: PJSContext): PJSString; cdecl; external SpiderMonkeyLib;
@@ -2254,7 +2280,7 @@ procedure JS_EndRequest(cx: PJSContext); cdecl; external SpiderMonkeyLib;
 
 /// Create a new JSContext
 {$IFDEF SM52}
-function JS_NewContext(maxbytes: uint32; maxNurseryBytes: uint32; parentContext: PJSContext): PJSContext;
+function JS_NewContext(maxbytes: uint32; maxNurseryBytes: uint32 = 16 * (1 SHL 20); parentContext: PJSContext = nil): PJSContext;
   cdecl; external SpiderMonkeyLib;
 function InitSelfHostedCode(cx: PJSContext): boolean; cdecl; external SpiderMonkeyLib;
 {$ELSE}
@@ -2300,6 +2326,10 @@ function JS_InitStandardClasses(cx: PJSContext; var obj: PJSObject): boolean; cd
 
 ///Return the global object for the active function on the context.
 function JS_CurrentGlobalOrNull(cx: PJSContext):PJSObject; cdecl; external SpiderMonkeyLib name 'CurrentGlobalOrNull';
+
+/// Add 'Reflect.parse', a SpiderMonkey extension, to the Reflect object on the
+// given global.
+function JS_InitReflectParse(cx: PJSContext; var obj: PJSObject): boolean; cdecl; external SpiderMonkeyLib;
 
 /// Initialize the 'ctypes' object on a global variable 'obj'. The 'ctypes'
 // object will be sealed.
@@ -2421,6 +2451,15 @@ function JS_GetInstancePrivate(cx: PJSContext; var obj: PJSObject; clasp: PJSCla
 /// Create a new JavaScript object for use as a global object.
 function JS_NewGlobalObject(cx: PJSContext; clasp: PJSClass; principals: PJSPrincipals;
   hookOption: OnNewGlobalHookOption; options: PJS_CompartmentOptions): PJSObject; cdecl; external SpiderMonkeyLib;
+
+/// Spidermonkey does not have a good way of keeping track of what compartments should be marked on
+/// their own. We can mark the roots unconditionally, but marking GC things only relevant in live
+/// compartments is hard. To mitigate this, we create a static trace hook, installed on each global
+/// object, from which we can be sure the compartment is relevant, and mark it.
+///
+/// It is still possible to specify custom trace hooks for global object classes. They can be
+/// provided via the CompartmentOptions passed to JS_NewGlobalObject.
+procedure JS_GlobalObjectTraceHook(trc: Pointer{ JSTracer }; global: PJSObject); cdecl; external SpiderMonkeyLib;
 
 /// Create a new object based on a specified class
 function JS_NewObject(cx: PJSContext; clasp: PJSClass): PJSObject; cdecl; external SpiderMonkeyLib;
@@ -2706,7 +2745,7 @@ function JS_ParseJSON(cx: PJSContext; const chars: PCChar16;
 // The callback must then return JS_FALSE to cause the exception to be propagated
 // to the calling script.
 procedure JS_ReportError(cx: PJSContext; const format: PCChar);
-  cdecl; varargs; external SpiderMonkeyLib;
+  cdecl; varargs; external SpiderMonkeyLib{$IFDEF SM52} name 'JS_ReportErrorASCII'{$ENDIF};
 /// Report an error with an application-defined error code.
 // - varargs is Additional arguments for the error message.
 //- These arguments must be of type jschar*
@@ -4065,6 +4104,11 @@ begin
   Result := JS_InitCTypesClass(@Self, obj);
 end;
 
+function JSContext.InitReflectParse(var obj: PJSObject): boolean;
+begin
+  Result := JS_InitReflectParse(@Self, obj);
+end;
+
 function JSContext.InitModuleClasses(var obj: PJSObject): boolean;
 begin
   Result := JS_InitModuleClasses(@Self, obj);
@@ -4168,8 +4212,10 @@ end;
 {$IFDEF SM52}
 class function JSContext.CreateNew(maxbytes: uint32; maxNurseryBytes: uint32; parentContext: PJSContext): PJSContext;
 begin
-  Result := JS_NewContext(maxbytes, maxNurseryBytes, parentContext);
-  InitSelfHostedCode(Result);
+  with TSynFPUException.ForLibraryCode do begin
+    Result := JS_NewContext(maxbytes, maxNurseryBytes, parentContext);
+    InitSelfHostedCode(Result);
+  end;
 end;
 {$ELSE}
 
@@ -4783,7 +4829,7 @@ begin
 end;
 
 function JSObject.InitClass(cx: PJSContext; var parent_proto: PJSObject;
-  clasp: PJSClass; _constructor: JSNative; nargs: UINT; ps: PJSPropertySpec;
+  clasp: PJSClass; _constructor: JSNative; nargs: Cardinal; ps: PJSPropertySpec;
   fs: PJSFunctionSpec; static_ps: PJSPropertySpec;
   static_fs: PJSFunctionSpec): PJSObject;
 var obj: PJSObject;
@@ -4914,6 +4960,20 @@ begin
   Result.asObject := @self;
 end;
 
+function JSObject.GetBufferDataAndLength(out data: Puint8Vector; out len: uint32): boolean;
+var
+  isShared: boolean;
+begin
+  if Self.IsArrayBufferViewObject then begin
+    Result := Self.GetObjectAsArrayBufferView(len, isShared, data) <> nil;
+  end else if Self.IsArrayBufferObject then begin
+    data := Self.GetArrayBufferData;
+    len := Self.GetArrayBufferByteLength;
+    Result := True
+  end else
+    Result := False;
+end;
+
 { ESMException }
 
 constructor ESMException.CreateWithTrace(const AFileName: RawUTF8; AJSErrorNum, ALineNum: integer; AMessage: string; const AStackTrace: SynUnicode);
@@ -4928,16 +4988,46 @@ begin
   FJSStackTrace := AStackTrace;
 end;
 
+procedure ESMException.WriteFormatted(WR: TTextWriter);
+{$IFNDEF SM_DEBUG}
+var
+  P, Pb: PWord;
+{$ENDIF}
+begin
+  WR.AddJSONEscape(pointer(FileName), Length(fileName));
+    WR.Add(':'); WR.Add(Line);
+  WR.AddShort('\n\nError: ');
+    WR.AddJSONEscapeString(Message); WR.AddShort('\n');
+  {$IFDEF SM_DEBUG}
+    WR.AddJSONEscapeString(Stack);
+  {$ELSE}
+    // any stack line what don't start with `@` is internal (core_modules) calls
+    // remove it to simplify domain logic debugging
+    if length(Stack) > 0 then begin
+      P := PWord(pointer(Stack));
+      while P^ <> 0 do begin
+        if (P^ = Ord('@')) then begin
+          Pb := P;
+          while (P^ <> 10) and (P^ <> 0) do Inc(P);
+          if (P^ = 10) then Inc(P);
+          WR.AddJSONEscapeW(Pb, (PtrUInt(P)-PtrUInt(Pb)) div 2);
+        end else
+          while (P^ <> 10) and (P^ <> 0) do
+            Inc(P);
+          if (P^ = 10) then Inc(P);
+      end;
+    end;
+  {$ENDIF}
+end;
+
+{$ifndef NOEXCEPTIONINTERCEPT}
 function ESMException.CustomLog(
   WR: TTextWriter; const Context: TSynLogExceptionContext): boolean;
 begin
-  with Context.EInstance as ESMException do begin
-    WR.AddJSONEscapeString(FileName); WR.Add(':'); WR.Add(Line); WR.AddShort('\r\rError: ');
-    WR.AddJSONEscapeString(Message); WR.AddShort('\n');
-    WR.AddJSONEscapeString(Stack);
-  end;
+  (Context.EInstance as ESMException).WriteFormatted(WR);
   result := true; // do not append a address
 end;
+{$endif}
 
 { JSArgRec }
 
@@ -4966,6 +5056,24 @@ end;
 function JSArgRec.getThisObject(cx: PJSContext): PJSObject;
 begin
   Result := this[cx].asObject;
+end;
+
+{ jsid }
+
+const
+  JSID_TYPE_MASK = $7;
+
+function jsid.isString: Boolean;
+begin
+  Result := JSIdType(asBits and JSID_TYPE_MASK) = JSID_TYPE_STRING;
+end;
+
+function jsid.asJSString: PJSString;
+begin
+{$ifdef WITHASSERT}
+  Assert(isString);
+{$endif}
+  Result := PJSString(asBits);
 end;
 
 { JSIdArray }
@@ -5511,7 +5619,9 @@ begin
     {$endif}
     varByte: setAsInteger(VByte);
     varInteger: setAsInteger(VInteger);
+    {$ifdef FPC}varQword,{$endif}
     varInt64: setAsInt64(VInt64);
+
     varSingle: setAsDouble(VSingle);
     varDouble: setAsDouble(VDouble);
     varCurrency: setAsDouble(VCurrency);
@@ -5543,8 +5653,8 @@ end;
 function jsval.Stringify(cx: PJSContext; var replacer: PJSObject;
   space: jsval; callback: JSONWriteCallback; data: pointer): Boolean;
 begin
-  TSynFPUException.ForLibraryCode;
-  Result := JS_Stringify(cx, Self, replacer, space, callback, data);
+  with TSynFPUException.ForLibraryCode do
+    Result := JS_Stringify(cx, Self, replacer, space, callback, data);
 end;
 
 function jsval.toSource(cx: PJSContext): PJSString;

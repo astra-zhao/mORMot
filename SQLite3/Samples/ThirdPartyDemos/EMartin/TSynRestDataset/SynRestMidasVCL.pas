@@ -6,7 +6,7 @@ unit SynRestMidasVCL;
 {
     This file is part of Synopse framework.
 
-    Synopse framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,7 +25,7 @@ unit SynRestMidasVCL;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -74,7 +74,9 @@ uses
   mORMot,
   mORMotHttpClient,
   SynCommons,
-  SynDB, SynRestVCL,
+  SynTable,
+  SynDB,
+  SynRestVCL,
   DB,
   {$ifdef FPC}
   BufDataset
@@ -131,11 +133,11 @@ type
     function PSGetCommandText: string; override;
     {$endif}
     {$IFNDEF NEXTGEN}
-    {$ifdef ISDELPHIXE2}
+    {$ifdef ISDELPHIXE}
     procedure SetCommandText(Value: WideString); override;
-    {$else ISDELPHIXE2}
+    {$else ISDELPHIXE}
     procedure SetCommandText(Value: String); override;
-    {$endif ISDELPHIXE2}
+    {$endif ISDELPHIXE}
     {$ELSE}
     procedure SetCommandText(Value: String); override;
     {$ENDIF !NEXTGEN}
@@ -383,11 +385,11 @@ end;
 {$endif ISDELPHI2007ANDUP}
 
 {$IFNDEF NEXTGEN}
-{$ifdef ISDELPHIXE2}
+{$ifdef ISDELPHIXE}
 procedure TSynRestDataSet.SetCommandText(Value: WideString);
-{$else ISDELPHIXE2}
+{$else ISDELPHIXE}
 procedure TSynRestDataSet.SetCommandText(Value: String);
-{$endif ISDELPHIXE2}
+{$endif ISDELPHIXE}
 {$ELSE}
 procedure TSynRestDataSet.SetCommandText(Value: String);
 {$ENDIF !NEXTGEN}

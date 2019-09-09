@@ -6,7 +6,7 @@ unit dddInfraEmailer;
 {
     This file is part of Synopse mORMot framework.
 
-    Synopse mORMot framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse mORMot framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,7 +25,7 @@ unit dddInfraEmailer;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -69,6 +69,7 @@ uses
   SynTests,
   SynCrtSock,
   SynMustache,
+  SynTable,
   SyncObjs,
   mORMot,
   mORMotDDD,
@@ -528,10 +529,10 @@ begin
     Email.MessageCompressed := SynLZCompressToBytes(aBody);
     CqrsBeginMethod(qaNone,result);
     if not Email.FilterAndValidate(Rest,msg) then
-      CqrsSetResultString(cqrsDDDValidationFailed,msg) else
+      CqrsSetResultString(cqrsDDDValidationFailed,msg,result) else
       if Rest.Add(Email,true)=0 then
-        CqrsSetResult(cqrsDataLayerError) else
-        CqrsSetResult(cqrsSuccess);
+        CqrsSetResult(cqrsDataLayerError,result) else
+        CqrsSetResult(cqrsSuccess,result);
   finally
     Email.Free;
   end;
@@ -644,11 +645,11 @@ end;
 
 procedure TDDDEmailerDaemonStats.NewConnection;
 begin
-  EnterCriticalSection(fLock);
+  fSafe^.Lock;
   try
     inc(fConnection);
   finally
-    LeaveCriticalSection(fLock);
+    fSafe^.UnLock;
   end;
 end;
 

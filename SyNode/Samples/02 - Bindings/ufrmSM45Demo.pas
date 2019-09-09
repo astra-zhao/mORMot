@@ -3,7 +3,8 @@ unit ufrmSM45Demo;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics,
+  {$IFNDEF LCL}Windows,{$ELSE}LclIntf, LMessages, LclType, LResources,{$ENDIF}
+  Messages, SysUtils, Variants, Classes, Graphics,
   Controls, Forms, Dialogs, StdCtrls,
 
   SynCommons,
@@ -15,6 +16,8 @@ uses
 const
   WM_DEBUG_INTERRUPT = WM_USER + 1;
 type
+
+  { TfrmSM45Demo }
 
   TfrmSM45Demo = class(TForm)
     mSource: TMemo;
@@ -52,11 +55,13 @@ implementation
 {$R *.dfm}
 {$I Synopse.inc}
 {$I SynSM.inc}   // define SM_DEBUG JS_THREADSAFE CONSIDER_TIME_IN_Z
+{$I SyNode.inc}   // define SM_DEBUG CONSIDER_TIME_IN_Z
 
 procedure TfrmSM45Demo.FormCreate(Sender: TObject);
 begin
   // create a JavaScript angine manager
-  FSMManager := TSMEngineManager.Create(StringToUTF8(RelToAbs(ExeVersion.ProgramFilePath, '..\..\core_modules')));
+  FSMManager := TSMEngineManager.Create(
+    {$IFDEF CORE_MODULES_IN_RES}''{$ELSE}StringToUTF8(RelToAbs(ExeVersion.ProgramFilePath, '../../core_modules')){$ENDIF});
   // optionaly increase a max engine memory
   FSMManager.MaxPerEngineMemory := 512 * 1024 * 1024;
   // add a handler called every time new engine is created
@@ -83,6 +88,8 @@ procedure TfrmSM45Demo.btnEvaluateClick(Sender: TObject);
 var
   res: jsval;
 begin
+  if FEngine = nil then
+    raise Exception.Create('JS engine not initialized');
   // evaluate a text from mSource memo
   if mSource.SelText <> '' then
     FEngine.Evaluate(mSource.SelText, 'mSourceSelected.js', 1, res)
@@ -92,6 +99,8 @@ end;
 
 procedure TfrmSM45Demo.cmd_Itenterupt(var aMessage: TMessage);
 begin
+  if FEngine = nil then
+    raise Exception.Create('JS engine not initialized');
 {$IFDEF SM52}
   FEngine.cx.RequestInterruptCallback;
   FEngine.cx.CheckForInterrupt;
@@ -103,7 +112,9 @@ end;
 procedure TfrmSM45Demo.doInteruptInOwnThread;
 begin
   PostMessage(Self.Handle, WM_DEBUG_INTERRUPT, 0, 0);
+  {$IFNDEF FPC}
   Application.ProcessMessages;
+  {$ENDIF}
 end;
 
 function TfrmSM45Demo.toLog(cx: PJSContext; argc: uintN; var vp: JSArgRec): Boolean;
@@ -149,12 +160,18 @@ end;
 function TfrmSM45Demo.DoOnGetEngineName(const aEngine: TSMEngine): RawUTF8;
 begin
   if GetCurrentThreadId = MainThreadID then
-    result := 'Form Engine';
+    result := 'FormEngine';
 end;
 
 procedure TfrmSM45Demo.DoOnJSDebuggerInit(const aEngine: TSMEngine);
 begin
-  aEngine.EvaluateModule(RelToAbs(ExeVersion.ProgramFilePath, 'ExtendDebuggerConsole.js'));
+//  aEngine.EvaluateModule(
+//  {$IFDEF MSWINDOWS}
+//    '..\..\..\..\DebuggerInit.js'
+//  {$ELSE}
+//    '../../../../DebuggerInit.js'
+//  {$ENDIF}
+//  );
 end;
 
 { TStringsProto }

@@ -1,3 +1,7 @@
+// original FireFox implementation is in:
+// git clone https://github.com/mozilla/gecko-dev.git
+// cd gecko-dev/devtools/server 
+// FF debugger Protocol: https://searchfox.org/mozilla-central/source/devtools/docs/backend/protocol.md
 import * as DevToolsUtils from 'DevTools/DevToolsUtils.js';
 import {JSPropertyProvider} from 'DevTools/js-property-provider.js';
 import {ObjectActorPreviewers} from 'DevTools/ObjectActorPreviewers.js';
@@ -14,7 +18,7 @@ class ActorManager {
     }
     init(){
         this.console = new ConsoleActor('console' + this.threadID);
-        this.addon = new AddonActor('addon' + this.threadID);
+        this.addon = new AddonActor('thread_' + dbg_binding.threadId);
     }
     getActor(actorName){
         let actor = this;
@@ -910,6 +914,26 @@ class SourceActor extends Actor {
             return null;
         }
     }
+    getProperPath(p) {
+        let res = p;
+        // replace single backslash with url slash (every occurrence)
+        res = res.replace(/\\/g, '/');
+        if (res.startsWith('//')) {
+            res = 'file:' + res
+        }
+        else if (res.charAt(1) == ':') {
+            res = 'file:///' + res
+        } 
+        return res;
+    }
+    findSourceMapData(data) {
+        let result = undefined;
+        let searchResult = new RegExp('\/\/# ?sourceMappingURL ?= ?(.*)', 'i').exec(data);
+        if (searchResult) {
+            result = searchResult.pop();
+        }
+        return result;
+    }
     get _resp(){
         let source = this._source;// || this.generatedSource;
         // This might not have a source or a generatedSource because we
@@ -919,20 +943,29 @@ class SourceActor extends Actor {
         if (source && source.introductionScript) {
             introductionUrl = source.introductionScript.source.url;
         }
-
+        let addonPath = undefined;
         let url = this._source.url;
-        if (url === 'debugger eval code') {
-            url = null;
+        if (!url || url === 'debugger eval code') {
+            url = undefined;
+        } else {
+            url = this.getProperPath(url.split(" -> ").pop());
+            if (url.startsWith('file:')) {
+                let webAppRootPath = this.getProperPath(dbg_binding.webAppRootPath);
+                if (url.startsWith(webAppRootPath)) {
+                    addonPath = url.substr(webAppRootPath.length);
+                }
+            }
         }
         return {
             "actor": this.fullActor,
-            "url": url ? url.split(" -> ").pop() : null,
-            "addonPath" : (url && url.lastIndexOf('\\') > 0) ? url.substr(url.lastIndexOf('\\')+1) : url, // displayed as a file name
-            "addonID": url ? ((url.lastIndexOf('\\') > 0) ? url.substr(0, url.lastIndexOf('\\') ) : '<>') : null, //displayed as a folder in debugger
+            "url": url,
+            "addonPath" : addonPath,
+            "addonID": addonPath ? dbg_binding.addonID : undefined,
             "isBlackBoxed": false,
             "isPrettyPrinted": false,
-            "introductionUrl": introductionUrl ? introductionUrl.split(" -> ").pop() : null,
-            introductionType: source ? source.introductionType : null
+            "introductionUrl": introductionUrl ? introductionUrl.split(' -> ').pop() : undefined,
+            introductionType: source ? source.introductionType : '',
+            "sourceMapURL": this.findSourceMapData(source.text)
         }
     }
 }
@@ -1567,21 +1600,31 @@ class FrameActor extends Actor {
 
 class AddonActor extends Actor {
     constructor(actorName) {
-        let serverActor = new Actor('server1'),
+        let serverActor = new Actor(dbg_binding.debuggerName),
             connActor = new Actor('conn1', serverActor);
         super(actorName, connActor);
         new ThreadActor();
     }
     attach(aRequest){
         return {
-            "type": "tabAttached",
-            "threadActor": actorManager.thread.fullActor
+            type: "tabAttached",
+            threadActor: actorManager.thread.fullActor,
+            traits: {reconfigure: false}
         }
     }
     detach(aRequest) {
         return {
             "type": "detached"
         }
+    }
+    reconfigure(aRequest) {
+        return {};
+    }
+    listWorkers(aRequest) {
+        return { from: this.fullActor, "workers":[] }
+    }
+    focus(aRequest) {
+       return {}
     }
 }
 
@@ -1592,14 +1635,23 @@ export function newMessage (msg) {
         actor,
         handler;
     try {
-        inRequest = typeof(msg) === "string" ? JSON.parse(msg) : msg;
+        if (msg === null) { // debugger client close socket
+            // emulate detach without sending responses to detached client
+            // {"to":"thread","type":"detach"}
+            actor = actorManager.getActor('thread')
+            if (actor) {
+                actor.detach()
+            }
+            return
+        }
+        inRequest = (typeof msg === "string") ? JSON.parse(msg) : msg;
         actorName = inRequest.to;
         actor = actorManager.getActor(actorName);
         if (actor) {
             handler = actor[inRequest.type];
             outRequest = handler ? actor[inRequest.type](inRequest) : {};
             if (!handler)
-                DevToolsUtils.reportException('newMessage: ' + inRequest.type + ' not found in ' + actorName, msg);
+                DevToolsUtils.reportException('newMessage: ' + inRequest.type + ' not found in ' + actorName + ' Class ' + actor.constructor.name, msg);
             if (outRequest) {
                 outRequest.from = actorName;
                 dbg_binding.send(outRequest);

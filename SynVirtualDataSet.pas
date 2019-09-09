@@ -6,7 +6,7 @@ unit SynVirtualDataSet;
 {
     This file is part of Synopse framework.
 
-    Synopse framework. Copyright (C) 2017 Arnaud Bouchez
+    Synopse framework. Copyright (C) 2019 Arnaud Bouchez
       Synopse Informatique - https://synopse.info
 
   *** BEGIN LICENSE BLOCK *****
@@ -25,7 +25,7 @@ unit SynVirtualDataSet;
 
   The Initial Developer of the Original Code is Arnaud Bouchez.
 
-  Portions created by the Initial Developer are Copyright (C) 2017
+  Portions created by the Initial Developer are Copyright (C) 2019
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -69,6 +69,7 @@ uses
   Variants,
   {$endif}
   SynCommons,
+  SynTable,
   {$ifdef ISDELPHIXE2}
   System.Generics.Collections,
   Data.DB, Data.FMTBcd;
@@ -232,16 +233,33 @@ const
 // - very optimized for speed
 procedure AddBcd(WR: TTextWriter; const AValue: TBcd);
 
+type
+  /// a string buffer, used by InternalBCDToBuffer to store its output text
+  TBCDBuffer = array[0..66] of AnsiChar;
+
 /// convert a TBcd value as text to the output buffer
 // - buffer is to be array[0..66] of AnsiChar
 // - returns the resulting text start in PBeg, and the length as function result
 // - does not handle negative sign and 0 value - see AddBcd() function use case
 // - very optimized for speed
-function InternalBCDToBuffer(const AValue: TBcd; ADest: PAnsiChar; var PBeg: PAnsiChar): integer;
+function InternalBCDToBuffer(const AValue: TBcd; out ADest: TBCDBuffer; var PBeg: PAnsiChar): integer;
 
 /// convert a TBcd value into a currency
 // - purepascal version included in latest Delphi versions is slower than this
 function BCDToCurr(const AValue: TBcd; var Curr: Currency): boolean;
+
+/// convert a TBcd value into a RawUTF8 text
+// - will call fast InternalBCDToBuffer function
+procedure BCDToUTF8(const AValue: TBcd; var result: RawUTF8); overload;
+
+/// convert a TBcd value into a RawUTF8 text
+// - will call fast InternalBCDToBuffer function
+function BCDToUTF8(const AValue: TBcd): RawUTF8; overload;
+  {$ifdef HASINLINE}inline;{$endif}
+
+/// convert a TBcd value into a VCL string text
+// - will call fast InternalBCDToBuffer function
+function BCDToString(const AValue: TBcd): string;
 
 
 /// export all rows of a TDataSet into JSON
@@ -259,7 +277,7 @@ function ToDataSet(aOwner: TComponent; const Data: TVariantDynArray;
 
 implementation
 
-function InternalBCDToBuffer(const AValue: TBcd; ADest: PAnsiChar; var PBeg: PAnsiChar): integer;
+function InternalBCDToBuffer(const AValue: TBcd; out ADest: TBCDBuffer; var PBeg: PAnsiChar): integer;
 var i,DecimalPos: integer;
     P,Frac: PByte;
     PEnd: PAnsiChar;
@@ -268,7 +286,7 @@ begin
   if AValue.Precision=0 then
     exit;
   DecimalPos := AValue.Precision-(AValue.SignSpecialPlaces and $3F);
-  P := pointer(ADest);
+  P := @ADest;
   Frac := @Avalue.Fraction;
   for i := 0 to AValue.Precision-1 do begin
     if i=DecimalPos then
@@ -288,7 +306,7 @@ begin
   end;
   // remove trailing 0 after decimal
   if AValue.Precision>DecimalPos then begin
-    repeat dec(P) until (P^<>ord('0')) or (P=pointer(ADest));
+    repeat dec(P) until (P^<>ord('0')) or (P=@ADest);
     PEnd := pointer(P);
     if PEnd^<>'.' then
       inc(PEnd);
@@ -296,7 +314,7 @@ begin
     PEnd := pointer(P);
   PEnd^ := #0;
   // remove leading 0
-  PBeg := ADest;
+  PBeg := @ADest;
   while (PBeg[0]='0') and (PBeg[1] in ['0'..'9']) do inc(PBeg);
   result := PEnd-PBeg;
 end;
@@ -304,9 +322,9 @@ end;
 procedure AddBcd(WR: TTextWriter; const AValue: TBcd);
 var len: integer;
     PBeg: PAnsiChar;
-    tmp: array[0..66] of AnsiChar;
+    tmp: TBCDBuffer;
 begin
-  len := InternalBCDToBuffer(AValue,@tmp,PBeg);
+  len := InternalBCDToBuffer(AValue,tmp,PBeg);
   if len<=0 then
     WR.Add('0') else begin
     if AValue.SignSpecialPlaces and $80=$80 then
@@ -318,9 +336,9 @@ end;
 function BCDToCurr(const AValue: TBcd; var Curr: Currency): boolean;
 var len: integer;
     PBeg: PAnsiChar;
-    tmp: array[0..66] of AnsiChar;
+    tmp: TBCDBuffer;
 begin
-  len := InternalBCDToBuffer(AValue,@tmp,PBeg);
+  len := InternalBCDToBuffer(AValue,tmp,PBeg);
   if len<=0 then
     Curr := 0 else begin
     PInt64(@Curr)^ := StrToCurr64(pointer(PBeg));
@@ -330,6 +348,28 @@ begin
   result := true;
 end;
 
+procedure BCDToUTF8(const AValue: TBcd; var result: RawUTF8);
+var len: integer;
+    PBeg: PAnsiChar;
+    tmp: TBCDBuffer;
+begin
+  len := InternalBCDToBuffer(AValue,tmp,PBeg);
+  SetString(result,PBeg,len);
+end;
+
+function BCDToUTF8(const AValue: TBcd): RawUTF8;
+begin
+  BCDToUTF8(AValue,result);
+end;
+
+function BCDToString(const AValue: TBcd): string;
+var len: integer;
+    PBeg: PAnsiChar;
+    tmp: TBCDBuffer;
+begin
+  len := InternalBCDToBuffer(AValue,tmp,PBeg);
+  Ansi7ToString(PWinAnsiChar(PBeg),len,result);
+end;
 
 
 var
@@ -409,17 +449,14 @@ var Data, Dest: pointer;
     OnlyTestForNull: boolean;
     TS: TTimeStamp;
 begin
-  result := false;
   OnlyTestForNull := (Buffer=nil);
   RowIndex := PRecInfo(ActiveBuffer).RowIndentifier;
   Data := GetRowFieldData(Field,RowIndex,DataLen,OnlyTestForNull);
-  if Data=nil then // on success, points to Int64,Double,Blob,UTF8
-    exit;
-  result := true;
-  if OnlyTestForNull then
+  result := Data<>nil; // null field or out-of-range RowIndex/Field
+  if OnlyTestForNull or not result then
     exit;
   Dest := pointer(Buffer); // works also if Buffer is [var] TValueBuffer
-  case Field.DataType of
+  case Field.DataType of // Data^ points to Int64,Double,Blob,UTF8
   ftBoolean:
     PWORDBOOL(Dest)^ := PBoolean(Data)^;
   ftInteger:
@@ -427,16 +464,17 @@ begin
   ftLargeint, ftFloat, ftCurrency:
     PInt64(Dest)^ := PInt64(Data)^;
   ftDate, ftTime, ftDateTime:
-    if PDateTime(Data)^=0 then
-      result := false else begin
+    if PDateTime(Data)^=0 then // handle 30/12/1899 date as NULL
+      result := false else begin  // inlined DataConvert(Field,Data,Dest,true)
       TS := DateTimeToTimeStamp(PDateTime(Data)^);
-      if (TS.Time<0) or (TS.Date<=0) then
-        result := false else // matches ValidateTimeStamp() expectations
-        case Field.DataType of
-        ftDate:     PDateTimeRec(Dest)^.Date := TS.Date;
-        ftTime:     PDateTimeRec(Dest)^.Time := TS.Time;
-        ftDateTime: PDateTimeRec(Dest)^.DateTime := PDateTime(Data)^;
-        end;
+      case Field.DataType of
+      ftDate:     PDateTimeRec(Dest)^.Date := TS.Date;
+      ftTime:     PDateTimeRec(Dest)^.Time := TS.Time;
+      ftDateTime:
+        if (TS.Time<0) or (TS.Date<=0) then
+          result := false else // matches ValidateTimeStamp() expectations
+          PDateTimeRec(Dest)^.DateTime := TimeStampToMSecs(TS);
+      end; // see NativeToDateTime/DateTimeToNative in TDataSet.DataConvert
     end;
   ftString: begin
     if DataLen<>0 then begin
@@ -459,8 +497,8 @@ begin
     {$endif}
   end;
   // ftBlob,ftMemo,ftWideMemo should be retrieved by CreateBlobStream()
-  else raise EDatabaseError.CreateFmt('%s.GetFieldData DataType=%d',
-         [ClassName,ord(Field.DataType)]);
+  else raise EDatabaseError.CreateFmt('%s.GetFieldData unhandled DataType=%s (%d)',
+         [ClassName,GetEnumName(TypeInfo(TFieldType),ord(Field.DataType))^,ord(Field.DataType)]);
   end;
 end;
 
@@ -691,7 +729,7 @@ type // as in FMTBcd.pas
     VType: TVarType;
     Reserved1, Reserved2, Reserved3: Word;
     VBcd: TFMTBcdData;
-    Reserved4: LongWord;
+    Reserved4: Cardinal;
   end;
 
 class procedure TSynVirtualDataSet.BcdWrite(const aWriter: TTextWriter; const aValue);
@@ -827,19 +865,19 @@ begin
       fColumns[ndx].Name := first^.Names[ndx];
       fColumns[ndx].FieldType := VariantTypeToSQLDBFieldType(first^.Values[ndx]);
       case fColumns[ndx].FieldType of
-      SynCommons.ftNull:
-        fColumns[ndx].FieldType := SynCommons.ftBlob;
-      SynCommons.ftCurrency:
-        fColumns[ndx].FieldType := SynCommons.ftDouble;
-      SynCommons.ftInt64: // ensure type coherency of whole column
+      SynTable.ftNull:
+        fColumns[ndx].FieldType := SynTable.ftBlob;
+      SynTable.ftCurrency:
+        fColumns[ndx].FieldType := SynTable.ftDouble;
+      SynTable.ftInt64: // ensure type coherency of whole column
         for j := 1 to first^.Count-1 do
           if j>=Length(fValues) then // check objects are consistent
             break else
             with _Safe(fValues[j],dvObject)^ do
             if (ndx<Length(Names)) and IdemPropNameU(Names[ndx],fColumns[ndx].Name) then
             if VariantTypeToSQLDBFieldType(Values[ndx]) in
-                [SynCommons.ftNull,SynCommons.ftDouble,SynCommons.ftCurrency] then begin
-              fColumns[ndx].FieldType := SynCommons.ftDouble;
+                [SynTable.ftNull,SynTable.ftDouble,SynTable.ftCurrency] then begin
+              fColumns[ndx].FieldType := SynTable.ftDouble;
               break;
             end;
       end;
@@ -862,7 +900,7 @@ begin
   F := Field.Index;
   if (cardinal(RowIndex)<cardinal(length(fValues))) and
      (cardinal(F)<cardinal(length(fColumns))) and
-     not (fColumns[F].FieldType in [ftNull,SynCommons.ftUnknown,SynCommons.ftCurrency]) then
+     not (fColumns[F].FieldType in [ftNull,SynTable.ftUnknown,SynTable.ftCurrency]) then
     with _Safe(fValues[RowIndex])^ do
     if (Kind=dvObject) and (Count>0) then begin
       if IdemPropNameU(fColumns[F].Name,Names[F]) then
@@ -876,14 +914,14 @@ begin
           case fColumns[F].FieldType of
           ftInt64:
             VariantToInt64(Values[ndx],fTemp64);
-          ftDouble,SynCommons.ftDate:
+          ftDouble,SynTable.ftDate:
             VariantToDouble(Values[ndx],PDouble(@fTemp64)^);
           ftUTF8: begin
             VariantToUTF8(Values[ndx],fTempUTF8,wasString);
             result := pointer(fTempUTF8);
             ResultLen := length(fTempUTF8);
           end;
-          SynCommons.ftBlob: begin
+          SynTable.ftBlob: begin
             VariantToUTF8(Values[ndx],fTempUTF8,wasString);
             if Base64MagicCheckAndDecode(pointer(fTempUTF8),length(fTempUTF8),fTempBlob) then begin
               result := pointer(fTempBlob);
